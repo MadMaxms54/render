@@ -42,24 +42,48 @@ const FINGERPRINT_SCRIPT = `
   Object.defineProperty(window, 'innerWidth', { get: () => 1920 });
   Object.defineProperty(window, 'innerHeight', { get: () => 1040 });
 
-  // --- WebGL: spoof Intel GPU ---
+  // --- WebGL: spoof Intel GPU, mock entire context if null ---
   const _getContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-    const ctx = _getContext.apply(this, [type, ...args]);
-    if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
-      const _getParam = ctx.getParameter.bind(ctx);
-      ctx.getParameter = function(param) {
-        if (param === 37445) return 'Intel Inc.';
-        if (param === 37446) return 'Intel(R) UHD Graphics 620';
-        return _getParam(param);
-      };
-      const _getExt = ctx.getExtension.bind(ctx);
-      ctx.getExtension = function(name) {
-        if (name === 'WEBGL_debug_renderer_info') {
-          return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
-        }
-        return _getExt(name);
-      };
+    let ctx = _getContext.apply(this, [type, ...args]);
+
+    if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+      if (!ctx) {
+        // WebGL unavailable on server — return a mock that passes fingerprint checks
+        const mockExt = { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+        ctx = {
+          getParameter: (param) => {
+            if (param === 37445) return 'Intel Inc.';
+            if (param === 37446) return 'Intel(R) UHD Graphics 620';
+            if (param === 7937) return 'WebKit WebGL';
+            if (param === 7936) return 'WebKit';
+            if (param === 3379) return 16384;
+            if (param === 36347) return 1024;
+            return null;
+          },
+          getExtension: (name) => name === 'WEBGL_debug_renderer_info' ? mockExt : null,
+          getSupportedExtensions: () => ['WEBGL_debug_renderer_info', 'OES_texture_float', 'OES_element_index_uint'],
+          getShaderPrecisionFormat: () => ({ precision: 23, rangeMin: 127, rangeMax: 127 }),
+          createBuffer: () => ({}),
+          bindBuffer: () => {},
+          bufferData: () => {},
+          canvas: this,
+        };
+      } else {
+        const _getParam = ctx.getParameter.bind(ctx);
+        ctx.getParameter = function(param) {
+          if (param === 37445) return 'Intel Inc.';
+          if (param === 37446) return 'Intel(R) UHD Graphics 620';
+          return _getParam(param);
+        };
+        const _getExt = ctx.getExtension.bind(ctx);
+        ctx.getExtension = function(name) {
+          if (name === 'WEBGL_debug_renderer_info') {
+            return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+          }
+          return _getExt(name);
+        };
+      }
     }
     return ctx;
   };
@@ -237,6 +261,11 @@ app.post("/get-session", async (req, res) => {
     browser = br;
     console.log("[4] Browser launched");
 
+    // force Windows user agent regardless of server OS
+    const WIN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+    await page.setUserAgent(WIN_UA);
+    console.log("[4b] User agent set to Windows");
+
     await page.evaluateOnNewDocument(FINGERPRINT_SCRIPT);
     console.log("[5] Fingerprint injected");
 
@@ -372,6 +401,8 @@ app.get("/fingerprint", async (req, res) => {
       connectOption: { defaultViewport: null },
     });
     browser = br;
+    const WIN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+    await page.setUserAgent(WIN_UA);
     await page.evaluateOnNewDocument(FINGERPRINT_SCRIPT);
     await page.goto("about:blank");
 
