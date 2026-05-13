@@ -1,0 +1,21 @@
+{
+  "name": "pupeter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.15.0",
+    "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "nodemon": "^3.1.14",
+    "puppeteer-core": "^24.41.0",
+    "puppeteer-extra-plugin-click-and-wait": "^2.3.3",
+    "puppeteer-real-browser": "^1.4.4",
+    "xlsx": "^0.18.5"
+  }
+}
