@@ -307,9 +307,14 @@ app.post("/get-session", async (req, res) => {
     ]);
     console.log("[10] Navigated after StartSearchButton click");
 
-    console.log("[11] Waiting 8 seconds for page/captcha to load...");
-    await new Promise((r) => setTimeout(r, 20000));
+    // wait for Cloudflare "Just a moment..." to pass (up to 30s)
+    console.log("[11] Checking for Cloudflare challenge...");
+    const cfPassed = await page.waitForFunction(() => {
+      return document.title !== 'Just a moment...';
+    }, { timeout: 30000 }).then(() => true).catch(() => false);
+    console.log(`[11] Cloudflare passed: ${cfPassed}, title: ${await page.title()}`);
 
+    // check for hCaptcha
     const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
     if (captchaFrame) {
       console.log("[12] hCaptcha found, clicking checkbox...");
@@ -327,16 +332,15 @@ app.post("/get-session", async (req, res) => {
       }, { timeout: 60000 });
       console.log("[14] hCaptcha token received");
     } else {
-      console.log("[12] No captcha detected, proceeding...");
+      console.log("[12] No hCaptcha detected");
     }
 
     const currentUrl = page.url();
     const currentTitle = await page.title();
-    console.log(`[15] Current URL: ${currentUrl}`);
-    console.log(`[15] Current title: ${currentTitle}`);
+    console.log(`[15] URL: ${currentUrl} | Title: ${currentTitle}`);
 
     console.log("[15] Waiting for #FileSearch...");
-    await page.waitForSelector("#FileSearch", { timeout: 15000 });
+    await page.waitForSelector("#FileSearch", { timeout: 30000 });
     console.log("[15] Clicking #FileSearch...");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
