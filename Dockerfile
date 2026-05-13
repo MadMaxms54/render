@@ -37,6 +37,7 @@ RUN npm install
 COPY ma.js ./
 ENV PORT=3000
 ENV DISPLAY=:99
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
 EXPOSE 3000
 ENTRYPOINT ["tini", "--"]
 CMD ["/bin/sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & dbus-daemon --system --nofork & sleep 1 && node ma.js"]
