@@ -112,7 +112,6 @@ const FINGERPRINT_SCRIPT = `
       fakePlugins.item = (i) => fakePlugins[i];
       fakePlugins.namedItem = (n) => fakePlugins.find(p => p.name === n) || null;
       fakePlugins.refresh = () => {};
-      Object.defineProperty(fakePlugins, 'length', { get: () => 3 });
       return fakePlugins;
     }
   });
@@ -128,7 +127,6 @@ const FINGERPRINT_SCRIPT = `
       ];
       arr.item = (i) => arr[i];
       arr.namedItem = (n) => arr.find(m => m.type === n) || null;
-      Object.defineProperty(arr, 'length', { get: () => 4 });
       return arr;
     }
   });
@@ -355,6 +353,66 @@ app.post("/get-session", async (req, res) => {
     console.error(err.stack);
     if (browser) await browser.close();
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// debug endpoint - call on localhost AND render to compare fingerprints
+app.get("/fingerprint", async (req, res) => {
+  let browser;
+  try {
+    const { page, browser: br } = await connect({
+      headless: false,
+      args: [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        "--use-gl=swiftshader", "--enable-webgl", "--enable-webgl2",
+        "--ignore-gpu-blocklist", "--enable-gpu-rasterization",
+        "--disable-blink-features=AutomationControlled",
+      ],
+      turnstile: true,
+      connectOption: { defaultViewport: null },
+    });
+    browser = br;
+    await page.evaluateOnNewDocument(FINGERPRINT_SCRIPT);
+    await page.goto("about:blank");
+
+    const fp = await page.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      languages: navigator.languages,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      deviceMemory: navigator.deviceMemory,
+      plugins: navigator.plugins.length,
+      webdriver: navigator.webdriver,
+      vendor: navigator.vendor,
+      screen: { w: screen.width, h: screen.height, depth: screen.colorDepth },
+      devicePixelRatio: window.devicePixelRatio,
+      chrome: typeof window.chrome,
+      chromeLoadTimes: typeof window.chrome?.loadTimes,
+      connection: navigator.connection ? navigator.connection.effectiveType : 'none',
+      webgl: (() => {
+        try {
+          const c = document.createElement('canvas');
+          const gl = c.getContext('webgl');
+          if (!gl) return 'NULL';
+          const ext = gl.getExtension('WEBGL_debug_renderer_info');
+          if (!ext) return 'no ext';
+          return {
+            vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL),
+            renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL),
+          };
+        } catch(e) { return 'error: ' + e.message; }
+      })(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      battery: typeof navigator.getBattery,
+      mediaDevices: typeof navigator.mediaDevices,
+    }));
+
+    await browser.close();
+    res.json(fp);
+  } catch (err) {
+    if (browser) await browser.close();
+    res.status(500).json({ error: err.message });
   }
 });
 
