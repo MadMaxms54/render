@@ -33,11 +33,33 @@ app.post("/get-session", async (req, res) => {
       headless: false,
       args: [
         "--start-maximized",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+
+        // fake GPU so WebGL/canvas fingerprint looks real
+        "--use-gl=swiftshader",
+        "--enable-webgl",
+        "--enable-accelerated-2d-canvas",
+
+        // hide automation
+        "--disable-blink-features=AutomationControlled",
+
+        // hide proxy/WebRTC leaks
+        "--disable-webrtc",
+        "--enforce-webrtc-ip-permission-check",
+        "--disable-features=WebRtcHideLocalIpsWithMdns",
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+
+        // locale/timezone to match US
+        "--lang=en-US,en",
+        "--accept-lang=en-US,en;q=0.9",
+
+        // font rendering
+        "--font-render-hinting=none",
       ],
       turnstile: true,
-      connectOption: {
-        defaultViewport: null,
-      },
+      connectOption: { defaultViewport: null },
       proxy: {
         host: proxy.host,
         port: proxy.port,
@@ -49,51 +71,69 @@ app.post("/get-session", async (req, res) => {
     browser = br;
     console.log("[4] Browser launched");
 
-    console.log("[5] Navigating to websurrogates.nycourts.gov...");
+    // spoof timezone, language, platform to match Windows/US
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+      Object.defineProperty(navigator, "language", { get: () => "en-US" });
+      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+      Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
+      Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
+      Object.defineProperty(screen, "width", { get: () => 1920 });
+      Object.defineProperty(screen, "height", { get: () => 1080 });
+      Object.defineProperty(screen, "colorDepth", { get: () => 24 });
+
+      // spoof timezone to US Eastern
+      const origDateTimeFormat = Intl.DateTimeFormat;
+      const OrigDate = Date;
+      window.Intl.DateTimeFormat = function(locale, options) {
+        options = options || {};
+        if (!options.timeZone) options.timeZone = "America/New_York";
+        return new origDateTimeFormat(locale, options);
+      };
+      Intl.DateTimeFormat.prototype = origDateTimeFormat.prototype;
+    });
+    console.log("[5] Browser fingerprint spoofed");
+
+    console.log("[6] Navigating to websurrogates.nycourts.gov...");
     await page.goto("https://websurrogates.nycourts.gov", {
       waitUntil: "domcontentloaded",
     });
-    console.log("[6] Page loaded");
+    console.log("[7] Page loaded");
 
-    console.log("[7] Waiting for #StartSearchButton...");
+    console.log("[8] Waiting for #StartSearchButton...");
     await page.waitForSelector("#StartSearchButton");
-    console.log("[8] Found #StartSearchButton, clicking...");
+    console.log("[9] Clicking #StartSearchButton...");
 
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
       page.click("#StartSearchButton"),
     ]);
-    console.log("[9] Navigated after StartSearchButton click");
+    console.log("[10] Navigated after StartSearchButton click");
 
-    console.log("[10] Waiting 8 seconds...");
+    console.log("[11] Waiting 8 seconds for captcha to load...");
     await new Promise((r) => setTimeout(r, 8000));
-    console.log("[11] Wait done, checking for captcha...");
 
-    try {
-      const frameHandle = await page.$('iframe[src*="hcaptcha"]');
-      const frame = await frameHandle?.contentFrame();
-
-      if (frame) {
-        console.log("[12] hCaptcha iframe found, clicking checkbox...");
-        try {
-          await frame.waitForSelector("#checkbox", { timeout: 10000 });
-          await frame.click("#checkbox");
-          console.log("[13] Captcha checkbox clicked");
-        } catch {
-          console.log("[13] Could not click captcha checkbox");
-        }
-      } else {
-        console.log("[12] No hCaptcha iframe found");
+    // check for captcha
+    const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
+    if (captchaFrame) {
+      console.log("[12] hCaptcha iframe found, clicking checkbox...");
+      try {
+        const frame = await captchaFrame.contentFrame();
+        await frame.waitForSelector("#checkbox", { timeout: 10000 });
+        await frame.click("#checkbox");
+        console.log("[13] Captcha checkbox clicked, waiting for auto-solve...");
+      } catch (e) {
+        console.log("[13] Checkbox click failed:", e.message);
       }
-    } catch (e) {
-      console.log("[12] Captcha error:", e.message);
+    } else {
+      console.log("[12] No captcha found");
     }
 
-    console.log("[14] Waiting for hcaptcha response token...");
+    console.log("[14] Waiting for hcaptcha token...");
     await page.waitForFunction(() => {
       const el = document.querySelector("[data-hcaptcha-response]");
       return el && el.getAttribute("data-hcaptcha-response") !== "";
-    }, { timeout: 0 });
+    }, { timeout: 60000 });
     console.log("[15] hCaptcha token received");
 
     console.log("[16] Clicking #FileSearch...");
@@ -101,10 +141,10 @@ app.post("/get-session", async (req, res) => {
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
       page.click("#FileSearch"),
     ]);
-    console.log("[17] Navigated to file search page");
+    console.log("[17] On file search page");
 
     let requestHeaders = {};
-    page.on('request', (req) => {
+    page.on("request", (req) => {
       if (req.isNavigationRequest() && !Object.keys(requestHeaders).length) {
         requestHeaders = req.headers();
         console.log("[18] Captured request headers");
@@ -123,9 +163,7 @@ app.post("/get-session", async (req, res) => {
 
     const cookies = await page.cookies();
     const cookiesDict = {};
-    for (const c of cookies) {
-      cookiesDict[c.name] = c.value;
-    }
+    for (const c of cookies) cookiesDict[c.name] = c.value;
     console.log(`[22] Collected ${Object.keys(cookiesDict).length} cookies`);
 
     const userAgent = await page.evaluate(() => navigator.userAgent);
@@ -149,10 +187,7 @@ app.post("/get-session", async (req, res) => {
     console.error("[ERROR]", err.message);
     console.error(err.stack);
     if (browser) await browser.close();
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
