@@ -4,17 +4,11 @@ RUN apt-get update && apt-get install -y \
     wget \
     xvfb \
     tini \
-    # fonts to match Windows fingerprint
     fonts-liberation \
     fonts-noto \
     fonts-noto-color-emoji \
     fonts-freefont-ttf \
-    # timezone support
     tzdata \
-    # swiftshader / GPU deps
-    libgl1-mesa-swx11 \
-    libegl1-mesa \
-    libgbm1 \
     --no-install-recommends \
     && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y ./google-chrome-stable_current_amd64.deb \
