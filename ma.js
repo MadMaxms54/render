@@ -15,7 +15,6 @@ function parseProxy(proxyUrl) {
   };
 }
 
-// full fingerprint spoof injected before every page load
 const FINGERPRINT_SCRIPT = `
   // --- Navigator ---
   Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
@@ -25,7 +24,10 @@ const FINGERPRINT_SCRIPT = `
   Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
   Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
   Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
-  Object.defineProperty(navigator, 'appVersion', { get: () => '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' });
+  Object.defineProperty(navigator, 'doNotTrack', { get: () => null });
+  Object.defineProperty(navigator, 'cookieEnabled', { get: () => true });
+  Object.defineProperty(navigator, 'onLine', { get: () => true });
+  delete navigator.__proto__.webdriver;
 
   // --- Screen ---
   Object.defineProperty(screen, 'width', { get: () => 1920 });
@@ -35,88 +37,149 @@ const FINGERPRINT_SCRIPT = `
   Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
   Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
   Object.defineProperty(window, 'devicePixelRatio', { get: () => 1 });
+  Object.defineProperty(window, 'outerWidth', { get: () => 1920 });
+  Object.defineProperty(window, 'outerHeight', { get: () => 1080 });
+  Object.defineProperty(window, 'innerWidth', { get: () => 1920 });
+  Object.defineProperty(window, 'innerHeight', { get: () => 1040 });
 
-  // --- WebGL: spoof real Intel GPU instead of SwiftShader ---
-  const spoofWebGL = (ctx) => {
-    if (!ctx) return;
-    const orig = ctx.getParameter.bind(ctx);
-    ctx.getParameter = function(param) {
-      if (param === 37445) return 'Intel Inc.';
-      if (param === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
-      return orig(param);
-    };
-  };
-  const origGetContext = HTMLCanvasElement.prototype.getContext;
+  // --- WebGL: spoof Intel GPU ---
+  const _getContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-    const ctx = origGetContext.apply(this, [type, ...args]);
-    if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') spoofWebGL(ctx);
+    const ctx = _getContext.apply(this, [type, ...args]);
+    if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
+      const _getParam = ctx.getParameter.bind(ctx);
+      ctx.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';
+        if (param === 37446) return 'Intel(R) UHD Graphics 620';
+        return _getParam(param);
+      };
+      const _getExt = ctx.getExtension.bind(ctx);
+      ctx.getExtension = function(name) {
+        if (name === 'WEBGL_debug_renderer_info') {
+          return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+        }
+        return _getExt(name);
+      };
+    }
     return ctx;
   };
 
-  // --- Chrome object (missing in headless) ---
-  if (!window.chrome) {
-    window.chrome = {
-      app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
-      runtime: {
-        OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
-        OnRestartRequiredReason: { APP_UPDATE: 'app_update', GC_REQUIRED: 'gc_required', OS_UPDATE: 'os_update' },
-        PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
-        PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
-        PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
-        RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
-      },
-    };
-  }
+  // --- Chrome object ---
+  window.chrome = {
+    app: {
+      isInstalled: false,
+      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+      getDetails: () => null,
+      getIsInstalled: () => false,
+      installState: () => 'not_installed',
+    },
+    runtime: {
+      OnInstalledReason: {},
+      OnRestartRequiredReason: {},
+      PlatformArch: {},
+      PlatformOs: {},
+      RequestUpdateCheckStatus: {},
+      connect: () => {},
+      sendMessage: () => {},
+    },
+    loadTimes: () => ({
+      commitLoadTime: Date.now() / 1000 - 1.2,
+      connectionInfo: 'http/1.1',
+      finishDocumentLoadTime: Date.now() / 1000 - 0.8,
+      finishLoadTime: Date.now() / 1000 - 0.5,
+      firstPaintAfterLoadTime: 0,
+      firstPaintTime: Date.now() / 1000 - 0.9,
+      navigationType: 'Other',
+      npnNegotiatedProtocol: 'h2',
+      requestTime: Date.now() / 1000 - 2,
+      startLoadTime: Date.now() / 1000 - 1.5,
+      wasAlternateProtocolAvailable: false,
+      wasFetchedViaSpdy: true,
+      wasNpnNegotiated: true,
+    }),
+    csi: () => ({ pageT: 4000, startE: Date.now() - 4000, tran: 15 }),
+  };
 
-  // --- Plugins: mimic real Chrome plugins ---
+  // --- Plugins ---
   Object.defineProperty(navigator, 'plugins', {
     get: () => {
-      const arr = [
-        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+      const fakePlugins = [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 },
       ];
-      arr.item = (i) => arr[i];
-      arr.namedItem = (n) => arr.find(p => p.name === n) || null;
-      arr.refresh = () => {};
-      return arr;
+      fakePlugins.item = (i) => fakePlugins[i];
+      fakePlugins.namedItem = (n) => fakePlugins.find(p => p.name === n) || null;
+      fakePlugins.refresh = () => {};
+      Object.defineProperty(fakePlugins, 'length', { get: () => 3 });
+      return fakePlugins;
     }
   });
 
-  // --- Mime types ---
+  // --- MimeTypes ---
   Object.defineProperty(navigator, 'mimeTypes', {
     get: () => {
       const arr = [
-        { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: {} },
-        { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: {} },
-        { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable', enabledPlugin: {} },
-        { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable', enabledPlugin: {} },
+        { type: 'application/pdf', suffixes: 'pdf', description: '' },
+        { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+        { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' },
+        { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable' },
       ];
       arr.item = (i) => arr[i];
       arr.namedItem = (n) => arr.find(m => m.type === n) || null;
+      Object.defineProperty(arr, 'length', { get: () => 4 });
       return arr;
     }
   });
 
-  // --- Timezone ---
-  const _DateTimeFormat = Intl.DateTimeFormat;
-  Intl.DateTimeFormat = function(locale, options = {}) {
-    if (!options.timeZone) options.timeZone = 'America/New_York';
-    return new _DateTimeFormat(locale, options);
-  };
-  Intl.DateTimeFormat.prototype = _DateTimeFormat.prototype;
+  // --- Battery API ---
+  if (navigator.getBattery) {
+    navigator.getBattery = () => Promise.resolve({
+      charging: true, chargingTime: 0, dischargingTime: Infinity, level: 1.0,
+      addEventListener: () => {}, removeEventListener: () => {},
+    });
+  }
 
-  // --- Permissions API: mimic real browser ---
-  const origQuery = window.navigator.permissions && window.navigator.permissions.query.bind(window.navigator.permissions);
-  if (origQuery) {
-    window.navigator.permissions.query = (parameters) => {
-      if (parameters.name === 'notifications') return Promise.resolve({ state: Notification.permission });
-      return origQuery(parameters);
+  // --- Connection ---
+  Object.defineProperty(navigator, 'connection', {
+    get: () => ({
+      downlink: 10, effectiveType: '4g', rtt: 50, saveData: false,
+      addEventListener: () => {}, removeEventListener: () => {},
+    })
+  });
+
+  // --- MediaDevices: fake mic/camera so site thinks real user ---
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    navigator.mediaDevices.enumerateDevices = () => Promise.resolve([
+      { deviceId: 'default', groupId: 'abc123', kind: 'audioinput', label: '' },
+      { deviceId: 'default', groupId: 'def456', kind: 'audiooutput', label: '' },
+      { deviceId: 'default', groupId: 'ghi789', kind: 'videoinput', label: '' },
+    ]);
+  }
+
+  // --- Permissions ---
+  if (navigator.permissions) {
+    const _query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (p) => {
+      if (p.name === 'notifications') return Promise.resolve({ state: 'prompt', onchange: null });
+      if (p.name === 'geolocation') return Promise.resolve({ state: 'prompt', onchange: null });
+      return _query(p);
     };
   }
 
-  // --- Remove headless traces ---
-  delete navigator.__proto__.webdriver;
+  // --- Timezone ---
+  const _DTF = Intl.DateTimeFormat;
+  Intl.DateTimeFormat = function(locale, opts = {}) {
+    if (!opts.timeZone) opts.timeZone = 'America/New_York';
+    return new _DTF(locale, opts);
+  };
+  Intl.DateTimeFormat.prototype = _DTF.prototype;
+  Intl.DateTimeFormat.supportedLocalesOf = _DTF.supportedLocalesOf;
+
+  // --- Notification ---
+  window.Notification = window.Notification || {};
+  Object.defineProperty(Notification, 'permission', { get: () => 'default' });
 `;
 
 app.post("/get-session", async (req, res) => {
@@ -140,15 +203,28 @@ app.post("/get-session", async (req, res) => {
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
+        // enable real-looking GPU via SwiftShader
         "--use-gl=swiftshader",
         "--enable-webgl",
+        "--enable-webgl2",
         "--enable-accelerated-2d-canvas",
+        "--ignore-gpu-blocklist",
+        "--enable-gpu-rasterization",
+        // anti-detection
         "--disable-blink-features=AutomationControlled",
+        // hide WebRTC leaks
         "--disable-webrtc",
         "--enforce-webrtc-ip-permission-check",
         "--disable-features=WebRtcHideLocalIpsWithMdns",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        // locale
         "--lang=en-US,en",
+        "--accept-lang=en-US,en;q=0.9",
+        // make it look like a real user session
+        "--enable-features=NetworkService,NetworkServiceInProcess",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
       ],
       turnstile: true,
       connectOption: { defaultViewport: null },
@@ -164,7 +240,7 @@ app.post("/get-session", async (req, res) => {
     console.log("[4] Browser launched");
 
     await page.evaluateOnNewDocument(FINGERPRINT_SCRIPT);
-    console.log("[5] Fingerprint spoofing injected");
+    console.log("[5] Fingerprint injected");
 
     console.log("[6] Navigating to websurrogates.nycourts.gov...");
     await page.goto("https://websurrogates.nycourts.gov", {
@@ -172,22 +248,27 @@ app.post("/get-session", async (req, res) => {
     });
     console.log("[7] Page loaded");
 
-    // log fingerprint check
     const fp = await page.evaluate(() => ({
       platform: navigator.platform,
       webdriver: navigator.webdriver,
-      languages: navigator.languages,
       plugins: navigator.plugins.length,
       webgl: (() => {
         try {
           const c = document.createElement('canvas');
           const gl = c.getContext('webgl');
+          if (!gl) return 'NULL - WebGL not available';
           const ext = gl.getExtension('WEBGL_debug_renderer_info');
-          return { vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL), renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) };
-        } catch(e) { return e.message; }
+          if (!ext) return 'no WEBGL_debug_renderer_info ext';
+          return {
+            vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL),
+            renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
+          };
+        } catch(e) { return 'error: ' + e.message; }
       })(),
+      chrome: typeof window.chrome,
+      connection: navigator.connection ? navigator.connection.effectiveType : 'none',
     }));
-    console.log("[7b] Fingerprint:", JSON.stringify(fp));
+    console.log("[7b] Fingerprint check:", JSON.stringify(fp));
 
     console.log("[8] Waiting for #StartSearchButton...");
     await page.waitForSelector("#StartSearchButton");
@@ -199,66 +280,64 @@ app.post("/get-session", async (req, res) => {
     ]);
     console.log("[10] Navigated after StartSearchButton click");
 
-    console.log("[11] Waiting 8 seconds for captcha to load...");
+    console.log("[11] Waiting 8 seconds for page/captcha to load...");
     await new Promise((r) => setTimeout(r, 8000));
 
     const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
     if (captchaFrame) {
-      console.log("[12] hCaptcha iframe found, clicking checkbox...");
+      console.log("[12] hCaptcha found, clicking checkbox...");
       try {
         const frame = await captchaFrame.contentFrame();
         await frame.waitForSelector("#checkbox", { timeout: 10000 });
         await frame.click("#checkbox");
-        console.log("[13] Captcha checkbox clicked, waiting for auto-solve...");
+        console.log("[13] Checkbox clicked, waiting for token...");
       } catch (e) {
         console.log("[13] Checkbox click failed:", e.message);
       }
+      await page.waitForFunction(() => {
+        const el = document.querySelector("[data-hcaptcha-response]");
+        return el && el.getAttribute("data-hcaptcha-response") !== "";
+      }, { timeout: 60000 });
+      console.log("[14] hCaptcha token received");
     } else {
-      console.log("[12] No captcha found");
+      console.log("[12] No captcha detected, proceeding...");
     }
 
-    console.log("[14] Waiting for hcaptcha token...");
-    await page.waitForFunction(() => {
-      const el = document.querySelector("[data-hcaptcha-response]");
-      return el && el.getAttribute("data-hcaptcha-response") !== "";
-    }, { timeout: 60000 });
-    console.log("[15] hCaptcha token received");
-
-    console.log("[16] Clicking #FileSearch...");
+    console.log("[15] Clicking #FileSearch...");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
       page.click("#FileSearch"),
     ]);
-    console.log("[17] On file search page");
+    console.log("[16] On file search page");
 
     let requestHeaders = {};
     page.on("request", (req) => {
       if (req.isNavigationRequest() && !Object.keys(requestHeaders).length) {
         requestHeaders = req.headers();
-        console.log("[18] Captured request headers");
+        console.log("[17] Captured request headers");
       }
     });
 
-    console.log("[19] Typing file number...");
+    console.log("[18] Typing file number...");
     await page.type("#FileNumber", "2025-1");
 
-    console.log("[20] Submitting form...");
+    console.log("[19] Submitting form...");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
       page.click("button[type='submit']"),
     ]);
-    console.log("[21] Form submitted");
+    console.log("[20] Form submitted");
 
     const cookies = await page.cookies();
     const cookiesDict = {};
     for (const c of cookies) cookiesDict[c.name] = c.value;
-    console.log(`[22] Collected ${Object.keys(cookiesDict).length} cookies`);
+    console.log(`[21] Collected ${Object.keys(cookiesDict).length} cookies`);
 
     const userAgent = await page.evaluate(() => navigator.userAgent);
-    console.log(`[23] User agent: ${userAgent}`);
+    console.log(`[22] User agent: ${userAgent}`);
 
     const html = await page.content();
-    console.log(`[24] Got HTML (${html.length} chars), sending response`);
+    console.log(`[23] HTML length: ${html.length}, sending response`);
 
     res.json({
       success: true,
@@ -269,7 +348,7 @@ app.post("/get-session", async (req, res) => {
     });
 
     await browser.close();
-    console.log("[25] Browser closed, done");
+    console.log("[24] Done");
 
   } catch (err) {
     console.error("[ERROR]", err.message);
