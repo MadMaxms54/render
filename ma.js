@@ -97,13 +97,19 @@ app.post("/get-session", async (req, res) => {
     }
 
     await new Promise((r) => setTimeout(r, 4000));
-    console.log("[13] Waiting for hcaptcha response token...");
 
-    await page.waitForFunction(() => {
+    // check if captcha solved, if not skip and try to proceed anyway
+    const captchaSolved = await page.evaluate(() => {
       const el = document.querySelector("[data-hcaptcha-response]");
       return el && el.getAttribute("data-hcaptcha-response") !== "";
-    }, { timeout: 25000 });
-    console.log("[14] hCaptcha token received");
+    });
+    console.log(`[13] Captcha solved: ${captchaSolved}`);
+
+    // log current page url and title to see where we are
+    const currentUrl = page.url();
+    const title = await page.title();
+    console.log(`[14] Current URL: ${currentUrl}`);
+    console.log(`[14] Page title: ${title}`);
 
     console.log("[15] Clicking #FileSearch...");
     await Promise.all([
