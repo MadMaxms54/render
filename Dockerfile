@@ -1,10 +1,13 @@
 FROM node:20
 
 RUN apt-get update && apt-get install -y \
-    chromium \
+    wget \
     xvfb \
     tini \
     --no-install-recommends \
+    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,7 +16,7 @@ RUN npm install
 COPY ma.js ./
 
 ENV DISPLAY=:99
-ENV CHROME_PATH=/usr/bin/chromium
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
 
 EXPOSE 3000
 ENTRYPOINT ["tini", "--"]
