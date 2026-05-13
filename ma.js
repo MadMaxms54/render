@@ -308,7 +308,7 @@ app.post("/get-session", async (req, res) => {
     console.log("[10] Navigated after StartSearchButton click");
 
     console.log("[11] Waiting 8 seconds for page/captcha to load...");
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 20000));
 
     const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
     if (captchaFrame) {
@@ -330,6 +330,13 @@ app.post("/get-session", async (req, res) => {
       console.log("[12] No captcha detected, proceeding...");
     }
 
+    const currentUrl = page.url();
+    const currentTitle = await page.title();
+    console.log(`[15] Current URL: ${currentUrl}`);
+    console.log(`[15] Current title: ${currentTitle}`);
+
+    console.log("[15] Waiting for #FileSearch...");
+    await page.waitForSelector("#FileSearch", { timeout: 15000 });
     console.log("[15] Clicking #FileSearch...");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded" }),
