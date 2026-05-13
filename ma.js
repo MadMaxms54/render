@@ -77,7 +77,7 @@ app.post("/get-session", async (req, res) => {
       page.click("#StartSearchButton"),
     ]);
 
-    await new Promise((r) => setTimeout(r, 12000));
+    await new Promise((r) => setTimeout(r, 5000));
 
     // CAPTCHA
     try {
@@ -94,12 +94,12 @@ app.post("/get-session", async (req, res) => {
       }
     } catch { }
 
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 4000));
 
     await page.waitForFunction(() => {
       const el = document.querySelector("[data-hcaptcha-response]");
       return el && el.getAttribute("data-hcaptcha-response") !== "";
-    }, { timeout: 0 });
+    }, { timeout: 25000 });
 
     // FILE SEARCH
     await Promise.all([
