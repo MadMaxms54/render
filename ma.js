@@ -312,7 +312,12 @@ app.post("/get-session", async (req, res) => {
     const cfPassed = await page.waitForFunction(() => {
       return document.title !== 'Just a moment...';
     }, { timeout: 30000 }).then(() => true).catch(() => false);
-    console.log(`[11] Cloudflare passed: ${cfPassed}, title: ${await page.title()}`);
+    const titleAfterCf = await page.title();
+    console.log(`[11] Cloudflare passed: ${cfPassed}, title: ${titleAfterCf}`);
+
+    // screenshot after cloudflare step
+    const shot1 = await page.screenshot({ encoding: "base64", fullPage: false });
+    console.log("[11s] Screenshot taken after CF check");
 
     // check for hCaptcha
     const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
@@ -338,6 +343,10 @@ app.post("/get-session", async (req, res) => {
     const currentUrl = page.url();
     const currentTitle = await page.title();
     console.log(`[15] URL: ${currentUrl} | Title: ${currentTitle}`);
+
+    // screenshot before FileSearch
+    const shot2 = await page.screenshot({ encoding: "base64", fullPage: false });
+    console.log("[15s] Screenshot taken before FileSearch");
 
     console.log("[15] Waiting for #FileSearch...");
     await page.waitForSelector("#FileSearch", { timeout: 30000 });
@@ -383,6 +392,7 @@ app.post("/get-session", async (req, res) => {
       request_headers: requestHeaders,
       cookies: cookiesDict,
       html,
+      screenshots: { after_cloudflare: shot1, before_filesearch: shot2 },
     });
 
     await browser.close();
@@ -391,8 +401,16 @@ app.post("/get-session", async (req, res) => {
   } catch (err) {
     console.error("[ERROR]", err.message);
     console.error(err.stack);
+    let errShot = null;
+    try {
+      // capture screenshot at the point of failure
+      const pages = await browser?.pages();
+      if (pages && pages.length > 0) {
+        errShot = await pages[0].screenshot({ encoding: "base64", fullPage: false });
+      }
+    } catch (_) {}
     if (browser) await browser.close();
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message, screenshot: errShot });
   }
 });
 
