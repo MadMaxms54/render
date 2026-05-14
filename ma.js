@@ -1,9 +1,78 @@
 const express = require("express");
 const { connect } = require("puppeteer-real-browser");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app = express();
 app.use(express.json());
 const PORT = 3000;
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+async function solveCaptchaWithClaude(page, captchaFrame) {
+  console.log("[captcha] Getting prompt text...");
+  const promptText = await captchaFrame.evaluate(() => {
+    const el = document.querySelector(".prompt-text") ||
+                document.querySelector('[class*="prompt"]') ||
+                document.querySelector(".challenge-prompt");
+    return el ? el.innerText.trim() : "identify the correct images";
+  });
+  console.log(`[captcha] Prompt: "${promptText}"`);
+
+  const screenshot = await page.screenshot({ encoding: "base64", fullPage: false });
+
+  console.log("[captcha] Sending to Claude Vision...");
+  const response = await anthropic.messages.create({
+    model: "claude-opus-4-5",
+    max_tokens: 100,
+    messages: [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: screenshot },
+        },
+        {
+          type: "text",
+          text: `This is an hCaptcha image challenge. The task shown is: "${promptText}".
+There is a 3x3 grid of 9 images, numbered 1-9 left to right, top to bottom.
+Which image numbers match the task? Reply with ONLY the numbers separated by commas. Example: 1,4,7
+If none match, reply: none`,
+        },
+      ],
+    }],
+  });
+
+  const answer = response.content[0].text.trim();
+  console.log(`[captcha] Claude answer: ${answer}`);
+
+  if (answer.toLowerCase() === "none") return false;
+
+  const numbers = answer.split(",")
+    .map(n => parseInt(n.trim()))
+    .filter(n => n >= 1 && n <= 9);
+
+  console.log(`[captcha] Clicking tiles: ${numbers}`);
+
+  for (const num of numbers) {
+    try {
+      const tiles = await captchaFrame.$$(".task-image");
+      if (tiles[num - 1]) {
+        await tiles[num - 1].click();
+        await new Promise((r) => setTimeout(r, 400 + Math.random() * 300));
+      }
+    } catch (e) {
+      console.log(`[captcha] Failed to click tile ${num}:`, e.message);
+    }
+  }
+
+  try {
+    await captchaFrame.click(".button-submit");
+    console.log("[captcha] Clicked verify button");
+  } catch (e) {
+    console.log("[captcha] No verify button:", e.message);
+  }
+
+  return true;
+}
 
 function parseProxy(proxyUrl) {
   const url = new URL(proxyUrl);
@@ -216,6 +285,7 @@ app.post("/get-session", async (req, res) => {
   console.log(`[2] Proxy parsed: ${proxy.host}:${proxy.port}`);
 
   let browser;
+  let shot1 = null, shot2 = null;
   try {
     console.log("[3] Launching browser...");
     const { page, browser: br } = await connect({
@@ -316,26 +386,47 @@ app.post("/get-session", async (req, res) => {
     console.log(`[11] Cloudflare passed: ${cfPassed}, title: ${titleAfterCf}`);
 
     // screenshot after cloudflare step
-    const shot1 = await page.screenshot({ encoding: "base64", fullPage: false });
+    shot1 = await page.screenshot({ encoding: "base64", fullPage: false });
     console.log("[11s] Screenshot taken after CF check");
 
     // check for hCaptcha
     const captchaFrame = await page.$('iframe[src*="hcaptcha"]');
     if (captchaFrame) {
       console.log("[12] hCaptcha found, clicking checkbox...");
+      const frame = await captchaFrame.contentFrame();
       try {
-        const frame = await captchaFrame.contentFrame();
         await frame.waitForSelector("#checkbox", { timeout: 10000 });
         await frame.click("#checkbox");
-        console.log("[13] Checkbox clicked, waiting for token...");
+        console.log("[13] Checkbox clicked, waiting 3s...");
+        await new Promise((r) => setTimeout(r, 3000));
       } catch (e) {
         console.log("[13] Checkbox click failed:", e.message);
       }
-      await page.waitForFunction(() => {
-        const el = document.querySelector("[data-hcaptcha-response]");
-        return el && el.getAttribute("data-hcaptcha-response") !== "";
-      }, { timeout: 60000 });
-      console.log("[14] hCaptcha token received");
+
+      // check if image challenge appeared — solve with Claude
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const tokenDone = await page.evaluate(() => {
+          const el = document.querySelector("[data-hcaptcha-response]");
+          return el && el.getAttribute("data-hcaptcha-response") !== "";
+        });
+        if (tokenDone) {
+          console.log("[14] hCaptcha token received (no image challenge needed)");
+          break;
+        }
+
+        // image challenge visible — use Claude to solve it
+        const hasChallenge = await frame.$(".task-image").catch(() => null);
+        if (hasChallenge) {
+          console.log(`[14] Image challenge detected (attempt ${attempt + 1}), solving with Claude...`);
+          await solveCaptchaWithClaude(page, frame);
+          await new Promise((r) => setTimeout(r, 3000));
+          shot1 = await page.screenshot({ encoding: "base64", fullPage: false });
+        } else {
+          console.log("[14] Waiting for captcha to resolve...");
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+      console.log("[14] Captcha step done");
     } else {
       console.log("[12] No hCaptcha detected");
     }
@@ -345,7 +436,7 @@ app.post("/get-session", async (req, res) => {
     console.log(`[15] URL: ${currentUrl} | Title: ${currentTitle}`);
 
     // screenshot before FileSearch
-    const shot2 = await page.screenshot({ encoding: "base64", fullPage: false });
+    shot2 = await page.screenshot({ encoding: "base64", fullPage: false });
     console.log("[15s] Screenshot taken before FileSearch");
 
     console.log("[15] Waiting for #FileSearch...");
